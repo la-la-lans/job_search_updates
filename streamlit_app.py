@@ -203,5 +203,3 @@ elif page == "🏢 Companies":
     
     if not companies_df.empty:
         st.dataframe(companies_df, use_container_width=True)
-
-streamlit run job_search_crm.py
