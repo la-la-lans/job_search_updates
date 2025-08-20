@@ -1,4 +1,4 @@
-# Job Search CRM - Streamlit Version
+# Job Search CRM - Enhanced Streamlit Version
 import streamlit as st
 import pandas as pd
 import os
@@ -16,7 +16,7 @@ def load_applications():
         return pd.read_csv(APPLICATIONS_FILE)
     else:
         return pd.DataFrame(columns=[
-            'date_applied', 'company', 'role_title', 'job_board', 'status', 
+            'date_applied', 'company', 'role_title', 'job_link', 'status', 
             'priority', 'salary_range', 'location', 'next_action', 
             'follow_up_date', 'notes'
         ])
@@ -68,33 +68,156 @@ def save_interviews(df):
     """Save interviews to CSV file"""
     df.to_csv(INTERVIEWS_FILE, index=False)
 
-def delete_rows_interface(df, save_function, item_name):
-    """Generic delete interface for any dataframe"""
-    if not df.empty and st.checkbox(f"🗑️ Enable Delete Mode for {item_name}"):
-        st.warning("⚠️ Delete mode enabled")
-        
-        # Create display names for selection
-        if 'company' in df.columns and 'role_title' in df.columns:
-            display_names = [f"{row['company']} - {row['role_title']}" for _, row in df.iterrows()]
-        elif 'company' in df.columns and 'contact_name' in df.columns:
-            display_names = [f"{row['contact_name']} ({row['company']})" for _, row in df.iterrows()]
-        elif 'company' in df.columns:
-            display_names = [f"{row['company']}" for _, row in df.iterrows()]
-        else:
-            display_names = [f"Row {i+1}" for i in range(len(df))]
-        
-        selected_indices = st.multiselect(
-            f"Select {item_name.lower()} to delete:",
-            range(len(df)),
-            format_func=lambda x: display_names[x]
-        )
-        
-        if selected_indices and st.button(f"🗑️ Delete Selected {item_name}", type="secondary"):
-            df_updated = df.drop(selected_indices).reset_index(drop=True)
-            save_function(df_updated)
-            st.success(f"✅ Deleted {len(selected_indices)} {item_name.lower()}")
-            st.rerun()
-            return df_updated
+def display_data_with_actions(df, save_function, data_type, column_configs=None):
+    """Display data with edit/delete actions for each row"""
+    if df.empty:
+        st.info(f"No {data_type.lower()} data yet. Add some using the form above!")
+        return df
+    
+    st.subheader(f"All {data_type} ({len(df)})")
+    
+    # Create action buttons for each row
+    for idx, row in df.iterrows():
+        with st.container():
+            # Display row data in expandable format
+            if data_type == "Applications":
+                row_title = f"{row['company']} - {row['role_title']} ({row['status']})"
+            elif data_type == "Companies":
+                row_title = f"{row['company']} - {row['industry']} ({row['applied_status']})"
+            elif data_type == "Contacts":
+                row_title = f"{row['contact_name']} ({row['company']}) - {row['response']}"
+            elif data_type == "Interviews":
+                row_title = f"{row['company']} - {row['interview_type']} ({row['prep_status']})"
+            else:
+                row_title = f"Row {idx + 1}"
+            
+            with st.expander(f"📝 {row_title}"):
+                col1, col2, col3 = st.columns([6, 1, 1])
+                
+                # Display row details in main column
+                with col1:
+                    row_data = {}
+                    for col in df.columns:
+                        if pd.notna(row[col]) and str(row[col]).strip():
+                            row_data[col.replace('_', ' ').title()] = str(row[col])
+                    
+                    # Display in a nice format
+                    for key, value in row_data.items():
+                        if key == 'Job Link' and value.startswith('http'):
+                            st.markdown(f"**{key}:** [{value}]({value})")
+                        else:
+                            st.write(f"**{key}:** {value}")
+                
+                # Edit button
+                with col2:
+                    if st.button("✏️", key=f"edit_{data_type}_{idx}", help="Edit this entry"):
+                        st.session_state[f'editing_{data_type}_{idx}'] = True
+                        st.rerun()
+                
+                # Delete button
+                with col3:
+                    if st.button("🗑️", key=f"delete_{data_type}_{idx}", help="Delete this entry", type="secondary"):
+                        # Confirm deletion
+                        if st.button(f"⚠️ Confirm Delete", key=f"confirm_delete_{data_type}_{idx}", type="secondary"):
+                            df_updated = df.drop(idx).reset_index(drop=True)
+                            save_function(df_updated)
+                            st.success(f"✅ Deleted entry")
+                            st.rerun()
+                        else:
+                            st.warning("Click 'Confirm Delete' to permanently delete this entry")
+                
+                # Edit form (appears when edit button is clicked)
+                if st.session_state.get(f'editing_{data_type}_{idx}', False):
+                    st.markdown("---")
+                    st.subheader("Edit Entry")
+                    
+                    with st.form(f"edit_form_{data_type}_{idx}"):
+                        edited_data = {}
+                        
+                        if data_type == "Applications":
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                edited_data['date_applied'] = st.date_input("Date Applied", value=pd.to_datetime(row['date_applied']).date() if pd.notna(row['date_applied']) else datetime.now().date())
+                                edited_data['company'] = st.text_input("Company", value=str(row['company']) if pd.notna(row['company']) else "")
+                                edited_data['role_title'] = st.text_input("Role Title", value=str(row['role_title']) if pd.notna(row['role_title']) else "")
+                                edited_data['job_link'] = st.text_input("Job Link", value=str(row['job_link']) if pd.notna(row['job_link']) else "")
+                                edited_data['status'] = st.selectbox("Status", ["Applied", "Interview", "Rejected", "Offer", "Follow-up"], 
+                                                                   index=["Applied", "Interview", "Rejected", "Offer", "Follow-up"].index(row['status']) if pd.notna(row['status']) and row['status'] in ["Applied", "Interview", "Rejected", "Offer", "Follow-up"] else 0)
+                            with col2:
+                                edited_data['priority'] = st.selectbox("Priority", ["High", "Medium", "Low"], 
+                                                                     index=["High", "Medium", "Low"].index(row['priority']) if pd.notna(row['priority']) and row['priority'] in ["High", "Medium", "Low"] else 1)
+                                edited_data['salary_range'] = st.text_input("Salary Range", value=str(row['salary_range']) if pd.notna(row['salary_range']) else "")
+                                edited_data['location'] = st.text_input("Location", value=str(row['location']) if pd.notna(row['location']) else "")
+                                edited_data['next_action'] = st.text_input("Next Action", value=str(row['next_action']) if pd.notna(row['next_action']) else "")
+                                edited_data['follow_up_date'] = st.date_input("Follow-up Date", value=pd.to_datetime(row['follow_up_date']).date() if pd.notna(row['follow_up_date']) else None)
+                            edited_data['notes'] = st.text_area("Notes", value=str(row['notes']) if pd.notna(row['notes']) else "")
+                        
+                        elif data_type == "Companies":
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                edited_data['company'] = st.text_input("Company", value=str(row['company']) if pd.notna(row['company']) else "")
+                                edited_data['industry'] = st.text_input("Industry", value=str(row['industry']) if pd.notna(row['industry']) else "")
+                                edited_data['size'] = st.selectbox("Company Size", ["<50", "50-200", "200-1000", "1000-5000", "5000+", "10,000+"],
+                                                                 index=["<50", "50-200", "200-1000", "1000-5000", "5000+", "10,000+"].index(row['size']) if pd.notna(row['size']) and row['size'] in ["<50", "50-200", "200-1000", "1000-5000", "5000+", "10,000+"] else 0)
+                                edited_data['tech_stack'] = st.text_input("Tech Stack", value=str(row['tech_stack']) if pd.notna(row['tech_stack']) else "")
+                            with col2:
+                                edited_data['culture_notes'] = st.text_input("Culture Notes", value=str(row['culture_notes']) if pd.notna(row['culture_notes']) else "")
+                                edited_data['glassdoor_rating'] = st.selectbox("Glassdoor Rating", ["1.0/5", "1.5/5", "2.0/5", "2.5/5", "3.0/5", "3.5/5", "4.0/5", "4.5/5", "5.0/5"],
+                                                                             index=["1.0/5", "1.5/5", "2.0/5", "2.5/5", "3.0/5", "3.5/5", "4.0/5", "4.5/5", "5.0/5"].index(row['glassdoor_rating']) if pd.notna(row['glassdoor_rating']) and row['glassdoor_rating'] in ["1.0/5", "1.5/5", "2.0/5", "2.5/5", "3.0/5", "3.5/5", "4.0/5", "4.5/5", "5.0/5"] else 4)
+                                edited_data['key_contacts'] = st.text_input("Key Contacts", value=str(row['key_contacts']) if pd.notna(row['key_contacts']) else "")
+                                edited_data['open_roles'] = st.text_input("Open Roles", value=str(row['open_roles']) if pd.notna(row['open_roles']) else "")
+                            edited_data['applied_status'] = st.selectbox("Applied Status", ["❌ Not yet", "🎯 Target", "✅ Applied"],
+                                                                       index=["❌ Not yet", "🎯 Target", "✅ Applied"].index(row['applied_status']) if pd.notna(row['applied_status']) and row['applied_status'] in ["❌ Not yet", "🎯 Target", "✅ Applied"] else 0)
+                        
+                        elif data_type == "Contacts":
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                edited_data['contact_name'] = st.text_input("Contact Name", value=str(row['contact_name']) if pd.notna(row['contact_name']) else "")
+                                edited_data['company'] = st.text_input("Company", value=str(row['company']) if pd.notna(row['company']) else "")
+                                edited_data['position'] = st.text_input("Position", value=str(row['position']) if pd.notna(row['position']) else "")
+                                edited_data['connection_type'] = st.selectbox("Connection Type", ["LinkedIn", "NTNU Alumni", "Referral", "Cold Outreach", "Meetup", "Conference"],
+                                                                            index=["LinkedIn", "NTNU Alumni", "Referral", "Cold Outreach", "Meetup", "Conference"].index(row['connection_type']) if pd.notna(row['connection_type']) and row['connection_type'] in ["LinkedIn", "NTNU Alumni", "Referral", "Cold Outreach", "Meetup", "Conference"] else 0)
+                            with col2:
+                                edited_data['contact_date'] = st.date_input("Contact Date", value=pd.to_datetime(row['contact_date']).date() if pd.notna(row['contact_date']) else datetime.now().date())
+                                edited_data['response'] = st.selectbox("Response", ["✅ Responded", "❌ No response", "🔄 Pending"],
+                                                                      index=["✅ Responded", "❌ No response", "🔄 Pending"].index(row['response']) if pd.notna(row['response']) and row['response'] in ["✅ Responded", "❌ No response", "🔄 Pending"] else 2)
+                                edited_data['meeting_scheduled'] = st.text_input("Meeting Scheduled", value=str(row['meeting_scheduled']) if pd.notna(row['meeting_scheduled']) else "")
+                                edited_data['follow_up_action'] = st.text_input("Follow-up Action", value=str(row['follow_up_action']) if pd.notna(row['follow_up_action']) else "")
+                            edited_data['notes'] = st.text_area("Notes", value=str(row['notes']) if pd.notna(row['notes']) else "")
+                        
+                        elif data_type == "Interviews":
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                edited_data['company'] = st.text_input("Company", value=str(row['company']) if pd.notna(row['company']) else "")
+                                edited_data['interview_date'] = st.text_input("Interview Date & Time", value=str(row['interview_date']) if pd.notna(row['interview_date']) else "")
+                                edited_data['interview_type'] = st.selectbox("Interview Type", ["1st Round - HR", "2nd Round - Technical", "3rd Round - Manager", "Final Round", "Case Study", "Panel Interview"],
+                                                                            index=["1st Round - HR", "2nd Round - Technical", "3rd Round - Manager", "Final Round", "Case Study", "Panel Interview"].index(row['interview_type']) if pd.notna(row['interview_type']) and row['interview_type'] in ["1st Round - HR", "2nd Round - Technical", "3rd Round - Manager", "Final Round", "Case Study", "Panel Interview"] else 0)
+                                edited_data['interviewer'] = st.text_input("Interviewer(s)", value=str(row['interviewer']) if pd.notna(row['interviewer']) else "")
+                            with col2:
+                                edited_data['prep_status'] = st.selectbox("Prep Status", ["✅ Ready", "🔄 In progress", "❌ Need work"],
+                                                                         index=["✅ Ready", "🔄 In progress", "❌ Need work"].index(row['prep_status']) if pd.notna(row['prep_status']) and row['prep_status'] in ["✅ Ready", "🔄 In progress", "❌ Need work"] else 1)
+                                edited_data['key_topics'] = st.text_input("Key Topics to Cover", value=str(row['key_topics']) if pd.notna(row['key_topics']) else "")
+                                edited_data['questions_to_ask'] = st.text_input("Questions to Ask", value=str(row['questions_to_ask']) if pd.notna(row['questions_to_ask']) else "")
+                                edited_data['outcome'] = st.selectbox("Outcome", ["", "Positive", "Neutral", "Negative"],
+                                                                     index=["", "Positive", "Neutral", "Negative"].index(row['outcome']) if pd.notna(row['outcome']) and row['outcome'] in ["", "Positive", "Neutral", "Negative"] else 0)
+                            edited_data['next_steps'] = st.text_area("Next Steps", value=str(row['next_steps']) if pd.notna(row['next_steps']) else "")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.form_submit_button("💾 Save Changes", type="primary"):
+                                # Update the dataframe
+                                for key, value in edited_data.items():
+                                    df.loc[idx, key] = value
+                                save_function(df)
+                                st.session_state[f'editing_{data_type}_{idx}'] = False
+                                st.success("✅ Changes saved successfully!")
+                                st.rerun()
+                        
+                        with col2:
+                            if st.form_submit_button("❌ Cancel"):
+                                st.session_state[f'editing_{data_type}_{idx}'] = False
+                                st.rerun()
+    
     return df
 
 # Streamlit App Configuration
@@ -107,6 +230,10 @@ st.set_page_config(
 
 st.title("🎯 Job Search CRM")
 st.markdown("Track your applications, networking, and progress")
+
+# Initialize session state for editing
+if 'editing_states' not in st.session_state:
+    st.session_state.editing_states = {}
 
 # Sidebar navigation
 st.sidebar.header("Navigation")
@@ -174,7 +301,7 @@ elif page == "📋 Applications":
                 date_applied = st.date_input("Date Applied", value=datetime.now())
                 company = st.text_input("Company *", placeholder="e.g., Cathay Financial")
                 role_title = st.text_input("Role Title *", placeholder="e.g., Data Analyst") 
-                job_board = st.selectbox("Job Board", ["104.com.tw", "LinkedIn", "CakeResume", "Yourator", "Company Direct"])
+                job_link = st.text_input("Job Link", placeholder="https://104.com.tw/job/...")
                 status = st.selectbox("Status", ["Applied", "Interview", "Rejected", "Offer", "Follow-up"])
             
             with col2:
@@ -192,7 +319,7 @@ elif page == "📋 Applications":
                         'date_applied': [date_applied],
                         'company': [company],
                         'role_title': [role_title],
-                        'job_board': [job_board],
+                        'job_link': [job_link],
                         'status': [status],
                         'priority': [priority],
                         'salary_range': [salary_range],
@@ -209,54 +336,11 @@ elif page == "📋 Applications":
                 else:
                     st.error("❌ Please fill in Company and Role Title fields")
     
-    # Display applications table
+    # Display applications with actions
+    applications_df = display_data_with_actions(applications_df, save_applications, "Applications")
+    
+    # Download button
     if not applications_df.empty:
-        st.subheader(f"All Applications ({len(applications_df)})")
-        
-        # Filters
-        col1, col2 = st.columns(2)
-        with col1:
-            status_filter = st.multiselect(
-                "Filter by Status", 
-                applications_df['status'].unique(),
-                default=applications_df['status'].unique()
-            )
-        with col2:
-            priority_filter = st.multiselect(
-                "Filter by Priority", 
-                applications_df['priority'].unique(),
-                default=applications_df['priority'].unique()
-            )
-        
-        # Apply filters
-        filtered_df = applications_df[
-            (applications_df['status'].isin(status_filter)) &
-            (applications_df['priority'].isin(priority_filter))
-        ]
-        
-        # Display table
-        st.dataframe(
-            filtered_df,
-            use_container_width=True,
-            column_config={
-                "date_applied": st.column_config.DateColumn("Date Applied"),
-                "company": st.column_config.TextColumn("Company", width="medium"),
-                "role_title": st.column_config.TextColumn("Role Title", width="medium"),
-                "job_board": st.column_config.TextColumn("Job Board"),
-                "status": st.column_config.TextColumn("Status"),
-                "priority": st.column_config.TextColumn("Priority"),
-                "salary_range": st.column_config.TextColumn("Salary Range"),
-                "location": st.column_config.TextColumn("Location"),
-                "next_action": st.column_config.TextColumn("Next Action"),
-                "follow_up_date": st.column_config.DateColumn("Follow-up Date"),
-                "notes": st.column_config.TextColumn("Notes", width="large")
-            }
-        )
-        
-        # Delete interface
-        applications_df = delete_rows_interface(applications_df, save_applications, "Applications")
-        
-        # Download button
         st.download_button(
             label="📥 Download Applications CSV",
             data=applications_df.to_csv(index=False),
@@ -310,30 +394,11 @@ elif page == "🏢 Companies":
                 else:
                     st.error("❌ Please fill in Company name")
     
-    # Display companies table
+    # Display companies with actions
+    companies_df = display_data_with_actions(companies_df, save_companies, "Companies")
+    
+    # Download button
     if not companies_df.empty:
-        st.subheader(f"Company Research ({len(companies_df)})")
-        
-        st.dataframe(
-            companies_df,
-            use_container_width=True,
-            column_config={
-                "company": st.column_config.TextColumn("Company", width="medium"),
-                "industry": st.column_config.TextColumn("Industry"),
-                "size": st.column_config.TextColumn("Size"),
-                "tech_stack": st.column_config.TextColumn("Tech Stack", width="medium"),
-                "culture_notes": st.column_config.TextColumn("Culture Notes", width="medium"),
-                "glassdoor_rating": st.column_config.TextColumn("Rating"),
-                "key_contacts": st.column_config.TextColumn("Key Contacts", width="medium"),
-                "open_roles": st.column_config.TextColumn("Open Roles", width="medium"),
-                "applied_status": st.column_config.TextColumn("Applied?")
-            }
-        )
-        
-        # Delete interface
-        companies_df = delete_rows_interface(companies_df, save_companies, "Companies")
-        
-        # Download button
         st.download_button(
             label="📥 Download Companies CSV",
             data=companies_df.to_csv(index=False),
@@ -387,30 +452,11 @@ elif page == "🤝 Networking":
                 else:
                     st.error("❌ Please fill in Contact Name")
     
-    # Display networking table
+    # Display networking with actions
+    networking_df = display_data_with_actions(networking_df, save_networking, "Contacts")
+    
+    # Download button
     if not networking_df.empty:
-        st.subheader(f"Networking Contacts ({len(networking_df)})")
-        
-        st.dataframe(
-            networking_df,
-            use_container_width=True,
-            column_config={
-                "contact_name": st.column_config.TextColumn("Contact Name", width="medium"),
-                "company": st.column_config.TextColumn("Company"),
-                "position": st.column_config.TextColumn("Position", width="medium"),
-                "connection_type": st.column_config.TextColumn("Connection Type"),
-                "contact_date": st.column_config.DateColumn("Contact Date"),
-                "response": st.column_config.TextColumn("Response"),
-                "meeting_scheduled": st.column_config.TextColumn("Meeting Scheduled"),
-                "follow_up_action": st.column_config.TextColumn("Follow-up Action", width="medium"),
-                "notes": st.column_config.TextColumn("Notes", width="large")
-            }
-        )
-        
-        # Delete interface
-        networking_df = delete_rows_interface(networking_df, save_networking, "Contacts")
-        
-        # Download button
         st.download_button(
             label="📥 Download Networking CSV",
             data=networking_df.to_csv(index=False),
@@ -464,30 +510,11 @@ elif page == "📝 Interviews":
                 else:
                     st.error("❌ Please fill in Company name")
     
-    # Display interviews table
+    # Display interviews with actions
+    interviews_df = display_data_with_actions(interviews_df, save_interviews, "Interviews")
+    
+    # Download button
     if not interviews_df.empty:
-        st.subheader(f"Interview Schedule ({len(interviews_df)})")
-        
-        st.dataframe(
-            interviews_df,
-            use_container_width=True,
-            column_config={
-                "company": st.column_config.TextColumn("Company", width="medium"),
-                "interview_date": st.column_config.TextColumn("Date & Time", width="medium"),
-                "interview_type": st.column_config.TextColumn("Type"),
-                "interviewer": st.column_config.TextColumn("Interviewer(s)", width="medium"),
-                "prep_status": st.column_config.TextColumn("Prep Status"),
-                "key_topics": st.column_config.TextColumn("Key Topics", width="large"),
-                "questions_to_ask": st.column_config.TextColumn("Questions to Ask", width="large"),
-                "outcome": st.column_config.TextColumn("Outcome"),
-                "next_steps": st.column_config.TextColumn("Next Steps", width="large")
-            }
-        )
-        
-        # Delete interface
-        interviews_df = delete_rows_interface(interviews_df, save_interviews, "Interviews")
-        
-        # Download button
         st.download_button(
             label="📥 Download Interviews CSV",
             data=interviews_df.to_csv(index=False),
