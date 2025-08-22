@@ -1,8 +1,9 @@
-# Job Search CRM - Enhanced Streamlit Version
+# Job Search CRM - Enhanced Streamlit Version with Excel Upload
 import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
+import io
 
 # File-based storage
 APPLICATIONS_FILE = "applications.csv"
@@ -67,6 +68,126 @@ def load_interviews():
 def save_interviews(df):
     """Save interviews to CSV file"""
     df.to_csv(INTERVIEWS_FILE, index=False)
+
+def process_uploaded_excel(uploaded_file):
+    """Process uploaded Excel file and return data for each sheet"""
+    try:
+        # Read all sheets from the Excel file
+        xl_file = pd.ExcelFile(uploaded_file)
+        sheet_names = xl_file.sheet_names
+        
+        data_dict = {}
+        
+        # Define expected sheet names and their corresponding data types
+        sheet_mapping = {
+            'Applications': 'applications',
+            'Companies': 'companies', 
+            'Networking': 'networking',
+            'Interviews': 'interviews'
+        }
+        
+        for sheet_name in sheet_names:
+            try:
+                df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
+                
+                # Clean up the data
+                df = df.dropna(how='all')  # Remove completely empty rows
+                df = df.fillna('')  # Fill NaN values with empty strings
+                
+                # Map sheet names to data types
+                data_type = None
+                for expected_sheet, dt in sheet_mapping.items():
+                    if expected_sheet.lower() in sheet_name.lower():
+                        data_type = dt
+                        break
+                
+                if data_type:
+                    data_dict[data_type] = df
+                else:
+                    # If sheet name doesn't match expected patterns, try to infer from columns
+                    columns = [col.lower() for col in df.columns]
+                    if 'role_title' in columns or 'job_link' in columns:
+                        data_dict['applications'] = df
+                    elif 'industry' in columns or 'glassdoor_rating' in columns:
+                        data_dict['companies'] = df
+                    elif 'contact_name' in columns or 'connection_type' in columns:
+                        data_dict['networking'] = df
+                    elif 'interview_type' in columns or 'interviewer' in columns:
+                        data_dict['interviews'] = df
+                        
+            except Exception as e:
+                st.warning(f"Could not process sheet '{sheet_name}': {str(e)}")
+                continue
+        
+        return data_dict, sheet_names
+        
+    except Exception as e:
+        st.error(f"Error processing Excel file: {str(e)}")
+        return {}, []
+
+def validate_and_clean_data(df, data_type):
+    """Validate and clean uploaded data based on data type"""
+    expected_columns = {
+        'applications': ['date_applied', 'company', 'role_title', 'job_link', 'status', 
+                        'priority', 'salary_range', 'location', 'next_action', 
+                        'follow_up_date', 'notes'],
+        'companies': ['company', 'industry', 'size', 'tech_stack', 'culture_notes', 
+                     'glassdoor_rating', 'key_contacts', 'open_roles', 'applied_status'],
+        'networking': ['contact_name', 'company', 'position', 'connection_type', 
+                      'contact_date', 'response', 'meeting_scheduled', 
+                      'follow_up_action', 'notes'],
+        'interviews': ['company', 'interview_date', 'interview_type', 'interviewer', 
+                      'prep_status', 'key_topics', 'questions_to_ask', 'outcome', 'next_steps']
+    }
+    
+    if data_type not in expected_columns:
+        return df
+    
+    # Ensure all expected columns exist
+    for col in expected_columns[data_type]:
+        if col not in df.columns:
+            df[col] = ''
+    
+    # Reorder columns to match expected structure
+    df = df[expected_columns[data_type]]
+    
+    # Clean date columns
+    date_columns = {
+        'applications': ['date_applied', 'follow_up_date'],
+        'networking': ['contact_date'],
+        'companies': [],
+        'interviews': []
+    }
+    
+    for date_col in date_columns.get(data_type, []):
+        if date_col in df.columns:
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
+            df[date_col] = df[date_col].fillna('')
+    
+    return df
+
+def create_excel_download():
+    """Create Excel file with all current data for download"""
+    output = io.BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # Load all current data
+        apps_df = load_applications()
+        companies_df = load_companies() 
+        networking_df = load_networking()
+        interviews_df = load_interviews()
+        
+        # Write each dataframe to a separate sheet
+        if not apps_df.empty:
+            apps_df.to_excel(writer, sheet_name='Applications', index=False)
+        if not companies_df.empty:
+            companies_df.to_excel(writer, sheet_name='Companies', index=False)
+        if not networking_df.empty:
+            networking_df.to_excel(writer, sheet_name='Networking', index=False)
+        if not interviews_df.empty:
+            interviews_df.to_excel(writer, sheet_name='Interviews', index=False)
+    
+    return output.getvalue()
 
 def display_data_with_actions(df, save_function, data_type, column_configs=None):
     """Display data with edit/delete actions for each row"""
@@ -239,8 +360,119 @@ if 'editing_states' not in st.session_state:
 st.sidebar.header("Navigation")
 page = st.sidebar.selectbox(
     "Choose Section", 
-    ["📊 Dashboard", "📋 Applications", "🏢 Companies", "🤝 Networking", "📝 Interviews"]
+    ["📊 Dashboard", "📋 Applications", "🏢 Companies", "🤝 Networking", "📝 Interviews", "📤 Data Management"]
 )
+
+# Add Excel upload section in sidebar
+st.sidebar.markdown("---")
+st.sidebar.header("📁 Quick Actions")
+
+# Download current data as Excel
+if st.sidebar.button("📥 Download All Data (Excel)", type="secondary"):
+    try:
+        excel_data = create_excel_download()
+        st.sidebar.download_button(
+            label="💾 Click to Download Excel File",
+            data=excel_data,
+            file_name=f"job_search_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        st.sidebar.error(f"Error creating Excel file: {str(e)}")
+
+# Upload Excel file in sidebar
+st.sidebar.subheader("📤 Upload from Backup")
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Excel File", 
+    type=['xlsx', 'xls'],
+    help="Upload your Google Sheets export or backup Excel file"
+)
+
+if uploaded_file is not None:
+    with st.sidebar:
+        try:
+            data_dict, sheet_names = process_uploaded_excel(uploaded_file)
+            
+            if data_dict:
+                st.success(f"✅ Found {len(data_dict)} data types in {len(sheet_names)} sheets")
+                
+                # Show what was found
+                for data_type, df in data_dict.items():
+                    st.write(f"**{data_type.title()}**: {len(df)} records")
+                
+                # Import options
+                st.subheader("Import Options")
+                import_mode = st.radio(
+                    "How to handle existing data?",
+                    ["Replace all", "Append new", "Preview only"],
+                    help="Replace: Delete current data and use uploaded data\nAppend: Add uploaded data to existing data\nPreview: Just show what would be imported"
+                )
+                
+                if st.button("🔄 Import Data", type="primary"):
+                    if import_mode == "Preview only":
+                        st.info("Preview mode - no data was actually imported")
+                        for data_type, df in data_dict.items():
+                            st.subheader(f"{data_type.title()} Preview")
+                            st.dataframe(df.head(), use_container_width=True)
+                    else:
+                        # Import the data
+                        imported_count = 0
+                        
+                        for data_type, uploaded_df in data_dict.items():
+                            try:
+                                # Clean and validate the data
+                                cleaned_df = validate_and_clean_data(uploaded_df, data_type)
+                                
+                                if import_mode == "Replace all":
+                                    # Replace existing data
+                                    if data_type == 'applications':
+                                        save_applications(cleaned_df)
+                                    elif data_type == 'companies':
+                                        save_companies(cleaned_df)
+                                    elif data_type == 'networking':
+                                        save_networking(cleaned_df)
+                                    elif data_type == 'interviews':
+                                        save_interviews(cleaned_df)
+                                    
+                                    imported_count += len(cleaned_df)
+                                    st.success(f"✅ Replaced {data_type} with {len(cleaned_df)} records")
+                                    
+                                elif import_mode == "Append new":
+                                    # Append to existing data
+                                    if data_type == 'applications':
+                                        existing_df = load_applications()
+                                        combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                        save_applications(combined_df)
+                                    elif data_type == 'companies':
+                                        existing_df = load_companies()
+                                        combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                        save_companies(combined_df)
+                                    elif data_type == 'networking':
+                                        existing_df = load_networking()
+                                        combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                        save_networking(combined_df)
+                                    elif data_type == 'interviews':
+                                        existing_df = load_interviews()
+                                        combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                        save_interviews(combined_df)
+                                    
+                                    imported_count += len(cleaned_df)
+                                    st.success(f"✅ Added {len(cleaned_df)} new {data_type} records")
+                                    
+                            except Exception as e:
+                                st.error(f"Error importing {data_type}: {str(e)}")
+                        
+                        if imported_count > 0:
+                            st.balloons()
+                            st.success(f"🎉 Successfully imported {imported_count} total records!")
+                            st.info("📝 Please refresh the page or navigate to different sections to see the imported data")
+            
+            else:
+                st.error("❌ Could not find valid data in the uploaded file")
+                st.info("Make sure your Excel file has sheets named 'Applications', 'Companies', 'Networking', or 'Interviews'")
+                
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
 
 # Dashboard 
 if page == "📊 Dashboard":
@@ -286,238 +518,6 @@ if page == "📊 Dashboard":
     else:
         st.info("📝 No applications yet. Start by adding some in the Applications tab!")
 
-# Applications
-elif page == "📋 Applications":
-    st.header("📋 Job Applications")
-    
-    applications_df = load_applications()
-    
-    # Add new application form
-    with st.expander("➕ Add New Application", expanded=True):
-        with st.form("new_application"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                date_applied = st.date_input("Date Applied", value=datetime.now())
-                company = st.text_input("Company *", placeholder="e.g., Cathay Financial")
-                role_title = st.text_input("Role Title *", placeholder="e.g., Data Analyst") 
-                job_link = st.text_input("Job Link", placeholder="https://104.com.tw/job/...")
-                status = st.selectbox("Status", ["Applied", "Interview", "Rejected", "Offer", "Follow-up"])
-            
-            with col2:
-                priority = st.selectbox("Priority", ["High", "Medium", "Low"])
-                salary_range = st.text_input("Salary Range", placeholder="NT$800K-1.2M")
-                location = st.text_input("Location", placeholder="Taipei, Remote, Hybrid")
-                next_action = st.text_input("Next Action", placeholder="Follow up, Prepare interview")
-                follow_up_date = st.date_input("Follow-up Date", value=None)
-            
-            notes = st.text_area("Notes", placeholder="Requirements, contact info, etc.")
-            
-            if st.form_submit_button("💾 Save Application", type="primary"):
-                if company and role_title:
-                    new_row = pd.DataFrame({
-                        'date_applied': [date_applied],
-                        'company': [company],
-                        'role_title': [role_title],
-                        'job_link': [job_link],
-                        'status': [status],
-                        'priority': [priority],
-                        'salary_range': [salary_range],
-                        'location': [location],
-                        'next_action': [next_action],
-                        'follow_up_date': [follow_up_date],
-                        'notes': [notes]
-                    })
-                    
-                    applications_df = pd.concat([applications_df, new_row], ignore_index=True)
-                    save_applications(applications_df)
-                    st.success(f"✅ Added application for {role_title} at {company}")
-                    st.rerun()
-                else:
-                    st.error("❌ Please fill in Company and Role Title fields")
-    
-    # Display applications with actions
-    applications_df = display_data_with_actions(applications_df, save_applications, "Applications")
-    
-    # Download button
-    if not applications_df.empty:
-        st.download_button(
-            label="📥 Download Applications CSV",
-            data=applications_df.to_csv(index=False),
-            file_name=f"applications_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-
-# Companies  
-elif page == "🏢 Companies":
-    st.header("🏢 Company Research")
-    
-    companies_df = load_companies()
-    
-    # Add new company form
-    with st.expander("➕ Add Company Research", expanded=True):
-        with st.form("new_company"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                company = st.text_input("Company *", placeholder="e.g., Cathay Financial")
-                industry = st.text_input("Industry", placeholder="e.g., Fintech/Banking")
-                size = st.selectbox("Company Size", ["<50", "50-200", "200-1000", "1000-5000", "5000+", "10,000+"])
-                tech_stack = st.text_input("Tech Stack", placeholder="SQL, Tableau, Python")
-            
-            with col2:
-                culture_notes = st.text_input("Culture Notes", placeholder="Traditional, fast-paced, etc.")
-                glassdoor_rating = st.selectbox("Glassdoor Rating", ["1.0/5", "1.5/5", "2.0/5", "2.5/5", "3.0/5", "3.5/5", "4.0/5", "4.5/5", "5.0/5"])
-                key_contacts = st.text_input("Key Contacts", placeholder="Name (Position)")
-                open_roles = st.text_input("Open Roles", placeholder="Data Analyst, BI Developer")
-            
-            applied_status = st.selectbox("Applied Status", ["❌ Not yet", "🎯 Target", "✅ Applied"])
-            
-            if st.form_submit_button("💾 Save Company", type="primary"):
-                if company:
-                    new_row = pd.DataFrame({
-                        'company': [company],
-                        'industry': [industry],
-                        'size': [size],
-                        'tech_stack': [tech_stack],
-                        'culture_notes': [culture_notes],
-                        'glassdoor_rating': [glassdoor_rating],
-                        'key_contacts': [key_contacts],
-                        'open_roles': [open_roles],
-                        'applied_status': [applied_status]
-                    })
-                    
-                    companies_df = pd.concat([companies_df, new_row], ignore_index=True)
-                    save_companies(companies_df)
-                    st.success(f"✅ Added {company} to research")
-                    st.rerun()
-                else:
-                    st.error("❌ Please fill in Company name")
-    
-    # Display companies with actions
-    companies_df = display_data_with_actions(companies_df, save_companies, "Companies")
-    
-    # Download button
-    if not companies_df.empty:
-        st.download_button(
-            label="📥 Download Companies CSV",
-            data=companies_df.to_csv(index=False),
-            file_name=f"companies_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-
-# Networking
-elif page == "🤝 Networking":
-    st.header("🤝 Networking Tracker")
-    
-    networking_df = load_networking()
-    
-    # Add new contact form
-    with st.expander("➕ Add New Contact", expanded=True):
-        with st.form("new_contact"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                contact_name = st.text_input("Contact Name *", placeholder="e.g., Sarah Chen")
-                company = st.text_input("Company", placeholder="e.g., PChome")
-                position = st.text_input("Position", placeholder="e.g., Senior Data Analyst")
-                connection_type = st.selectbox("Connection Type", ["LinkedIn", "NTNU Alumni", "Referral", "Cold Outreach", "Meetup", "Conference"])
-            
-            with col2:
-                contact_date = st.date_input("Contact Date", value=datetime.now())
-                response = st.selectbox("Response", ["✅ Responded", "❌ No response", "🔄 Pending"])
-                meeting_scheduled = st.text_input("Meeting Scheduled", placeholder="2025-08-21 10:00 AM")
-                follow_up_action = st.text_input("Follow-up Action", placeholder="Send thank you, Ask for referral")
-            
-            notes = st.text_area("Notes", placeholder="Details about the conversation, next steps, etc.")
-            
-            if st.form_submit_button("💾 Save Contact", type="primary"):
-                if contact_name:
-                    new_row = pd.DataFrame({
-                        'contact_name': [contact_name],
-                        'company': [company],
-                        'position': [position],
-                        'connection_type': [connection_type],
-                        'contact_date': [contact_date],
-                        'response': [response],
-                        'meeting_scheduled': [meeting_scheduled],
-                        'follow_up_action': [follow_up_action],
-                        'notes': [notes]
-                    })
-                    
-                    networking_df = pd.concat([networking_df, new_row], ignore_index=True)
-                    save_networking(networking_df)
-                    st.success(f"✅ Added contact {contact_name}")
-                    st.rerun()
-                else:
-                    st.error("❌ Please fill in Contact Name")
-    
-    # Display networking with actions
-    networking_df = display_data_with_actions(networking_df, save_networking, "Contacts")
-    
-    # Download button
-    if not networking_df.empty:
-        st.download_button(
-            label="📥 Download Networking CSV",
-            data=networking_df.to_csv(index=False),
-            file_name=f"networking_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-
-# Interviews
-elif page == "📝 Interviews":
-    st.header("📝 Interview Preparation")
-    
-    interviews_df = load_interviews()
-    
-    # Add new interview form
-    with st.expander("➕ Add New Interview", expanded=True):
-        with st.form("new_interview"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                company = st.text_input("Company *", placeholder="e.g., PChome")
-                interview_date = st.text_input("Interview Date & Time", placeholder="2025-08-22 2:00 PM")
-                interview_type = st.selectbox("Interview Type", ["1st Round - HR", "2nd Round - Technical", "3rd Round - Manager", "Final Round", "Case Study", "Panel Interview"])
-                interviewer = st.text_input("Interviewer(s)", placeholder="e.g., Jennifer Liu, David Chang")
-            
-            with col2:
-                prep_status = st.selectbox("Prep Status", ["✅ Ready", "🔄 In progress", "❌ Need work"])
-                key_topics = st.text_input("Key Topics to Cover", placeholder="SQL skills, project examples, culture fit")
-                questions_to_ask = st.text_input("Questions to Ask", placeholder="Team structure, growth opportunities")
-                outcome = st.selectbox("Outcome", ["", "Positive", "Neutral", "Negative"])
-            
-            next_steps = st.text_area("Next Steps", placeholder="2nd round scheduled, waiting for feedback, etc.")
-            
-            if st.form_submit_button("💾 Save Interview", type="primary"):
-                if company:
-                    new_row = pd.DataFrame({
-                        'company': [company],
-                        'interview_date': [interview_date],
-                        'interview_type': [interview_type],
-                        'interviewer': [interviewer],
-                        'prep_status': [prep_status],
-                        'key_topics': [key_topics],
-                        'questions_to_ask': [questions_to_ask],
-                        'outcome': [outcome],
-                        'next_steps': [next_steps]
-                    })
-                    
-                    interviews_df = pd.concat([interviews_df, new_row], ignore_index=True)
-                    save_interviews(interviews_df)
-                    st.success(f"✅ Added interview for {company}")
-                    st.rerun()
-                else:
-                    st.error("❌ Please fill in Company name")
-    
-    # Display interviews with actions
-    interviews_df = display_data_with_actions(interviews_df, save_interviews, "Interviews")
-    
-    # Download button
-    if not interviews_df.empty:
-        st.download_button(
-            label="📥 Download Interviews CSV",
-            data=interviews_df.to_csv(index=False),
-            file_name=f"interviews_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
+# Data Management Page
+elif page == "📤 Data Management":
+    st.header("
