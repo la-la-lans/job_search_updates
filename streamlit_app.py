@@ -520,4 +520,481 @@ if page == "📊 Dashboard":
 
 # Data Management Page
 elif page == "📤 Data Management":
-    st.header("
+    st.header("📤 Data Management")
+    
+    st.markdown("Manage your job search data - backup, restore, and export options")
+    
+    # Current data overview
+    st.subheader("📊 Current Data Overview")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    applications_df = load_applications()
+    companies_df = load_companies()
+    networking_df = load_networking()
+    interviews_df = load_interviews()
+    
+    with col1:
+        st.metric("Applications", len(applications_df))
+    with col2:
+        st.metric("Companies", len(companies_df))
+    with col3:
+        st.metric("Networking", len(networking_df))
+    with col4:
+        st.metric("Interviews", len(interviews_df))
+    
+    # Export section
+    st.subheader("📥 Export Data")
+    st.markdown("Download your data for backup or to use with Google Sheets")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Excel download
+        if st.button("📊 Download Excel File", type="primary"):
+            try:
+                excel_data = create_excel_download()
+                st.download_button(
+                    label="💾 Click to Download Excel",
+                    data=excel_data,
+                    file_name=f"job_search_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                st.success("✅ Excel file ready for download!")
+            except Exception as e:
+                st.error(f"Error creating Excel file: {str(e)}")
+    
+    with col2:
+        # Individual CSV downloads
+        st.markdown("**Individual CSV Files:**")
+        
+        if not applications_df.empty:
+            st.download_button(
+                "📋 Applications CSV",
+                applications_df.to_csv(index=False),
+                f"applications_{datetime.now().strftime('%Y%m%d')}.csv",
+                "text/csv"
+            )
+        
+        if not companies_df.empty:
+            st.download_button(
+                "🏢 Companies CSV",
+                companies_df.to_csv(index=False),
+                f"companies_{datetime.now().strftime('%Y%m%d')}.csv",
+                "text/csv"
+            )
+        
+        if not networking_df.empty:
+            st.download_button(
+                "🤝 Networking CSV",
+                networking_df.to_csv(index=False),
+                f"networking_{datetime.now().strftime('%Y%m%d')}.csv",
+                "text/csv"
+            )
+        
+        if not interviews_df.empty:
+            st.download_button(
+                "📝 Interviews CSV",
+                interviews_df.to_csv(index=False),
+                f"interviews_{datetime.now().strftime('%Y%m%d')}.csv",
+                "text/csv"
+            )
+    
+    st.markdown("---")
+    
+    # Import section
+    st.subheader("📤 Import Data")
+    st.markdown("Upload Excel files from Google Sheets or other backups")
+    
+    uploaded_file = st.file_uploader(
+        "Choose Excel file", 
+        type=['xlsx', 'xls'],
+        help="Upload Excel file with your job search data. Sheets should be named: Applications, Companies, Networking, Interviews"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            data_dict, sheet_names = process_uploaded_excel(uploaded_file)
+            
+            if data_dict:
+                st.success(f"✅ Successfully processed Excel file!")
+                st.info(f"Found {len(sheet_names)} sheets: {', '.join(sheet_names)}")
+                
+                # Show preview of data
+                st.subheader("📋 Data Preview")
+                
+                for data_type, df in data_dict.items():
+                    with st.expander(f"Preview {data_type.title()} ({len(df)} records)"):
+                        st.dataframe(df.head(10), use_container_width=True)
+                
+                # Import options
+                st.subheader("⚙️ Import Settings")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    import_mode = st.radio(
+                        "Import Mode",
+                        ["Replace all data", "Append to existing data", "Preview only"],
+                        help="Replace: Delete current data and use uploaded data\nAppend: Add uploaded data to existing data\nPreview: Just show what would be imported"
+                    )
+                
+                with col2:
+                    selected_types = st.multiselect(
+                        "Select data types to import",
+                        list(data_dict.keys()),
+                        default=list(data_dict.keys())
+                    )
+                
+                if st.button("🚀 Import Selected Data", type="primary"):
+                    if import_mode == "Preview only":
+                        st.info("Preview mode - no data was actually imported")
+                    else:
+                        imported_count = 0
+                        errors = []
+                        
+                        for data_type in selected_types:
+                            if data_type not in data_dict:
+                                continue
+                                
+                            try:
+                                uploaded_df = data_dict[data_type]
+                                cleaned_df = validate_and_clean_data(uploaded_df, data_type)
+                                
+                                if import_mode == "Replace all data":
+                                    # Replace existing data
+                                    if data_type == 'applications':
+                                        save_applications(cleaned_df)
+                                    elif data_type == 'companies':
+                                        save_companies(cleaned_df)
+                                    elif data_type == 'networking':
+                                        save_networking(cleaned_df)
+                                    elif data_type == 'interviews':
+                                        save_interviews(cleaned_df)
+                                    
+                                    imported_count += len(cleaned_df)
+                                    st.success(f"✅ Replaced {data_type} with {len(cleaned_df)} records")
+                                    
+                                elif import_mode == "Append to existing data":
+                                    # Append to existing data
+                                    if data_type == 'applications':
+                                        existing_df = load_applications()
+                                        combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                        save_applications(combined_df)
+                                    elif data_type == 'companies':
+                                        existing_df = load_companies()
+                                        combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                        save_companies(combined_df)
+                                    elif data_type == 'networking':
+                                        existing_df = load_networking()
+                                        combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                        save_networking(combined_df)
+                                    elif data_type == 'interviews':
+                                        existing_df = load_interviews()
+                                        combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                        save_interviews(combined_df)
+                                    
+                                    imported_count += len(cleaned_df)
+                                    st.success(f"✅ Added {len(cleaned_df)} new {data_type} records")
+                                    
+                            except Exception as e:
+                                error_msg = f"Error importing {data_type}: {str(e)}"
+                                errors.append(error_msg)
+                                st.error(error_msg)
+                        
+                        if imported_count > 0:
+                            st.balloons()
+                            st.success(f"🎉 Successfully imported {imported_count} total records!")
+                            
+                            if errors:
+                                st.warning("⚠️ Some errors occurred during import - check the messages above")
+                            
+                            st.info("📝 Navigate to other sections to see your imported data")
+                        
+                        elif errors:
+                            st.error("❌ Import failed - check the error messages above")
+            
+            else:
+                st.error("❌ Could not find valid data in the uploaded file")
+                st.info("💡 Make sure your Excel file has sheets named 'Applications', 'Companies', 'Networking', or 'Interviews' with the correct column structure")
+                
+        except Exception as e:
+            st.error(f"❌ Error processing file: {str(e)}")
+    
+    # Instructions
+    st.markdown("---")
+    st.subheader("📖 Instructions")
+    
+    with st.expander("How to use with Google Sheets"):
+        st.markdown("""
+        **To backup your data to Google Sheets:**
+        1. Click "Download Excel File" above
+        2. Open Google Sheets
+        3. Create a new spreadsheet
+        4. Go to File → Import → Upload
+        5. Select your downloaded Excel file
+        6. Choose "Replace spreadsheet" 
+        
+        **To restore from Google Sheets:**
+        1. Open your Google Sheets backup
+        2. Go to File → Download → Microsoft Excel (.xlsx)
+        3. Upload the downloaded file using the "Import Data" section above
+        4. Choose your import mode and click "Import Selected Data"
+        
+        **Sheet Names:** Make sure your Google Sheets has tabs named:
+        - Applications
+        - Companies  
+        - Networking
+        - Interviews
+        """)
+    
+    with st.expander("Column Requirements"):
+        st.markdown("""
+        **Applications sheet should have columns:**
+        `date_applied, company, role_title, job_link, status, priority, salary_range, location, next_action, follow_up_date, notes`
+        
+        **Companies sheet should have columns:**
+        `company, industry, size, tech_stack, culture_notes, glassdoor_rating, key_contacts, open_roles, applied_status`
+        
+        **Networking sheet should have columns:**
+        `contact_name, company, position, connection_type, contact_date, response, meeting_scheduled, follow_up_action, notes`
+        
+        **Interviews sheet should have columns:**
+        `company, interview_date, interview_type, interviewer, prep_status, key_topics, questions_to_ask, outcome, next_steps`
+        """)
+
+# Applications
+elif page == "📋 Applications":
+    st.header("📋 Job Applications")
+    
+    applications_df = load_applications()
+    
+    # Add new application form
+    with st.expander("➕ Add New Application", expanded=True):
+        with st.form("new_application"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                date_applied = st.date_input("Date Applied", value=datetime.now())
+                company = st.text_input("Company *", placeholder="e.g., Cathay Financial")
+                role_title = st.text_input("Role Title *", placeholder="e.g., Data Analyst") 
+                job_link = st.text_input("Job Link", placeholder="https://104.com.tw/job/...")
+                status = st.selectbox("Status", ["Applied", "Interview", "Rejected", "Offer", "Follow-up"])
+            
+            with col2:
+                priority = st.selectbox("Priority", ["High", "Medium", "Low"])
+                salary_range = st.text_input("Salary Range", placeholder="NT$800K-1.2M")
+                location = st.text_input("Location", placeholder="Taipei, Remote, Hybrid")
+                next_action = st.text_input("Next Action", placeholder="Follow up, Prepare interview")
+                follow_up_date = st.date_input("Follow-up Date", value=None)
+            
+            notes = st.text_area("Notes", placeholder="Requirements, contact info, etc.")
+            
+            if st.form_submit_button("💾 Save Application", type="primary"):
+                if company and role_title:
+                    new_row = pd.DataFrame({
+                        'date_applied': [date_applied],
+                        'company': [company],
+                        'role_title': [role_title],
+                        'job_link': [job_link],
+                        'status': [status],
+                        'priority': [priority],
+                        'salary_range': [salary_range],
+                        'location': [location],
+                        'next_action': [next_action],
+                        'follow_up_date': [follow_up_date],
+                        'notes': [notes]
+                    })
+                    
+                    applications_df = pd.concat([applications_df, new_row], ignore_index=True)
+                    save_applications(applications_df)
+                    st.success(f"✅ Added application for {role_title} at {company}")
+                    st.rerun()
+                else:
+                    st.error("❌ Please fill in Company and Role Title fields")
+    
+    # Display applications with actions
+    applications_df = display_data_with_actions(applications_df, save_applications, "Applications")
+    
+    # Download button
+    if not applications_df.empty:
+        st.download_button(
+            label="📥 Download Applications CSV",
+            data=applications_df.to_csv(index=False),
+            file_name=f"applications_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+# Companies  
+elif page == "🏢 Companies":
+    st.header("🏢 Company Research")
+    
+    companies_df = load_companies()
+    
+    # Add new company form
+    with st.expander("➕ Add Company Research", expanded=True):
+        with st.form("new_company"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                company = st.text_input("Company *", placeholder="e.g., Cathay Financial")
+                industry = st.text_input("Industry", placeholder="e.g., Fintech/Banking")
+                size = st.selectbox("Company Size", ["<50", "50-200", "200-1000", "1000-5000", "5000+", "10,000+"])
+                tech_stack = st.text_input("Tech Stack", placeholder="SQL, Tableau, Python")
+            
+            with col2:
+                culture_notes = st.text_input("Culture Notes", placeholder="Traditional, fast-paced, etc.")
+                glassdoor_rating = st.selectbox("Glassdoor Rating", ["1.0/5", "1.5/5", "2.0/5", "2.5/5", "3.0/5", "3.5/5", "4.0/5", "4.5/5", "5.0/5"])
+                key_contacts = st.text_input("Key Contacts", placeholder="Name (Position)")
+                open_roles = st.text_input("Open Roles", placeholder="Data Analyst, BI Developer")
+            
+            applied_status = st.selectbox("Applied Status", ["❌ Not yet", "🎯 Target", "✅ Applied"])
+            
+            if st.form_submit_button("💾 Save Company", type="primary"):
+                if company:
+                    new_row = pd.DataFrame({
+                        'company': [company],
+                        'industry': [industry],
+                        'size': [size],
+                        'tech_stack': [tech_stack],
+                        'culture_notes': [culture_notes],
+                        'glassdoor_rating': [glassdoor_rating],
+                        'key_contacts': [key_contacts],
+                        'open_roles': [open_roles],
+                        'applied_status': [applied_status]
+                    })
+                    
+                    companies_df = pd.concat([companies_df, new_row], ignore_index=True)
+                    save_companies(companies_df)
+                    st.success(f"✅ Added {company} to research")
+                    st.rerun()
+                else:
+                    st.error("❌ Please fill in Company name")
+    
+    # Display companies with actions
+    companies_df = display_data_with_actions(companies_df, save_companies, "Companies")
+    
+    # Download button
+    if not companies_df.empty:
+        st.download_button(
+            label="📥 Download Companies CSV",
+            data=companies_df.to_csv(index=False),
+            file_name=f"companies_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+# Networking
+elif page == "🤝 Networking":
+    st.header("🤝 Networking Tracker")
+    
+    networking_df = load_networking()
+    
+    # Add new contact form
+    with st.expander("➕ Add New Contact", expanded=True):
+        with st.form("new_contact"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                contact_name = st.text_input("Contact Name *", placeholder="e.g., Sarah Chen")
+                company = st.text_input("Company", placeholder="e.g., PChome")
+                position = st.text_input("Position", placeholder="e.g., Senior Data Analyst")
+                connection_type = st.selectbox("Connection Type", ["LinkedIn", "NTNU Alumni", "Referral", "Cold Outreach", "Meetup", "Conference"])
+            
+            with col2:
+                contact_date = st.date_input("Contact Date", value=datetime.now())
+                response = st.selectbox("Response", ["✅ Responded", "❌ No response", "🔄 Pending"])
+                meeting_scheduled = st.text_input("Meeting Scheduled", placeholder="2025-08-21 10:00 AM")
+                follow_up_action = st.text_input("Follow-up Action", placeholder="Send thank you, Ask for referral")
+            
+            notes = st.text_area("Notes", placeholder="Details about the conversation, next steps, etc.")
+            
+            if st.form_submit_button("💾 Save Contact", type="primary"):
+                if contact_name:
+                    new_row = pd.DataFrame({
+                        'contact_name': [contact_name],
+                        'company': [company],
+                        'position': [position],
+                        'connection_type': [connection_type],
+                        'contact_date': [contact_date],
+                        'response': [response],
+                        'meeting_scheduled': [meeting_scheduled],
+                        'follow_up_action': [follow_up_action],
+                        'notes': [notes]
+                    })
+                    
+                    networking_df = pd.concat([networking_df, new_row], ignore_index=True)
+                    save_networking(networking_df)
+                    st.success(f"✅ Added contact {contact_name}")
+                    st.rerun()
+                else:
+                    st.error("❌ Please fill in Contact Name")
+    
+    # Display networking with actions
+    networking_df = display_data_with_actions(networking_df, save_networking, "Contacts")
+    
+    # Download button
+    if not networking_df.empty:
+        st.download_button(
+            label="📥 Download Networking CSV",
+            data=networking_df.to_csv(index=False),
+            file_name=f"networking_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+# Interviews
+elif page == "📝 Interviews":
+    st.header("📝 Interview Preparation")
+    
+    interviews_df = load_interviews()
+    
+    # Add new interview form
+    with st.expander("➕ Add New Interview", expanded=True):
+        with st.form("new_interview"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                company = st.text_input("Company *", placeholder="e.g., PChome")
+                interview_date = st.text_input("Interview Date & Time", placeholder="2025-08-22 2:00 PM")
+                interview_type = st.selectbox("Interview Type", ["1st Round - HR", "2nd Round - Technical", "3rd Round - Manager", "Final Round", "Case Study", "Panel Interview"])
+                interviewer = st.text_input("Interviewer(s)", placeholder="e.g., Jennifer Liu, David Chang")
+            
+            with col2:
+                prep_status = st.selectbox("Prep Status", ["✅ Ready", "🔄 In progress", "❌ Need work"])
+                key_topics = st.text_input("Key Topics to Cover", placeholder="SQL skills, project examples, culture fit")
+                questions_to_ask = st.text_input("Questions to Ask", placeholder="Team structure, growth opportunities")
+                outcome = st.selectbox("Outcome", ["", "Positive", "Neutral", "Negative"])
+            
+            next_steps = st.text_area("Next Steps", placeholder="2nd round scheduled, waiting for feedback, etc.")
+            
+            if st.form_submit_button("💾 Save Interview", type="primary"):
+                if company:
+                    new_row = pd.DataFrame({
+                        'company': [company],
+                        'interview_date': [interview_date],
+                        'interview_type': [interview_type],
+                        'interviewer': [interviewer],
+                        'prep_status': [prep_status],
+                        'key_topics': [key_topics],
+                        'questions_to_ask': [questions_to_ask],
+                        'outcome': [outcome],
+                        'next_steps': [next_steps]
+                    })
+                    
+                    interviews_df = pd.concat([interviews_df, new_row], ignore_index=True)
+                    save_interviews(interviews_df)
+                    st.success(f"✅ Added interview for {company}")
+                    st.rerun()
+                else:
+                    st.error("❌ Please fill in Company name")
+    
+    # Display interviews with actions
+    interviews_df = display_data_with_actions(interviews_df, save_interviews, "Interviews")
+    
+    # Download button
+    if not interviews_df.empty:
+        st.download_button(
+            label="📥 Download Interviews CSV",
+            data=interviews_df.to_csv(index=False),
+            file_name=f"interviews_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
