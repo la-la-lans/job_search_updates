@@ -4,7 +4,6 @@ import pandas as pd
 import os
 from datetime import datetime
 import io
-import openpyxl
 
 # File-based storage
 APPLICATIONS_FILE = "applications.csv"
