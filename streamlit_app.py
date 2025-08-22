@@ -1,9 +1,10 @@
-# Job Search CRM - Enhanced Streamlit Version with Excel Upload
+# Job Search CRM 
 import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
 import io
+import openpyxl
 
 # File-based storage
 APPLICATIONS_FILE = "applications.csv"
@@ -380,18 +381,139 @@ if st.sidebar.button("📥 Download All Data (Excel)", type="secondary"):
     except Exception as e:
         st.sidebar.error(f"Error creating Excel file: {str(e)}")
 
-# Upload Excel file in sidebar
-st.sidebar.subheader("📤 Upload from Backup")
-uploaded_file = st.sidebar.file_uploader(
-    "Upload Excel File", 
-    type=['xlsx', 'xls'],
-    help="Upload your Google Sheets export or backup Excel file"
+# Separate upload sections for each data type
+st.sidebar.markdown("---")
+st.sidebar.subheader("📤 Upload Individual Files")
+
+# Applications upload
+applications_file = st.sidebar.file_uploader(
+    "📋 Applications", 
+    type=['xlsx', 'xls', 'csv'],
+    key="applications_upload",
+    help="Upload Applications data"
 )
 
-if uploaded_file is not None:
+# Companies upload
+companies_file = st.sidebar.file_uploader(
+    "🏢 Companies", 
+    type=['xlsx', 'xls', 'csv'],
+    key="companies_upload",
+    help="Upload Companies data"
+)
+
+# Networking upload
+networking_file = st.sidebar.file_uploader(
+    "🤝 Networking", 
+    type=['xlsx', 'xls', 'csv'],
+    key="networking_upload",
+    help="Upload Networking data"
+)
+
+# Interviews upload
+interviews_file = st.sidebar.file_uploader(
+    "📝 Interviews", 
+    type=['xlsx', 'xls', 'csv'],
+    key="interviews_upload",
+    help="Upload Interviews data"
+)
+
+# Process individual uploads
+uploaded_files = {
+    'applications': applications_file,
+    'companies': companies_file,
+    'networking': networking_file,
+    'interviews': interviews_file
+}
+
+for data_type, uploaded_file in uploaded_files.items():
+    if uploaded_file is not None:
+        with st.sidebar:
+            try:
+                # Read the file
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                
+                # Clean up the data
+                df = df.dropna(how='all')  # Remove completely empty rows
+                df = df.fillna('')  # Fill NaN values with empty strings
+                
+                st.success(f"✅ Loaded {data_type}: {len(df)} records")
+                
+                # Import options
+                import_mode = st.radio(
+                    f"Import {data_type.title()}:",
+                    ["Replace all", "Append new", "Preview"],
+                    key=f"{data_type}_import_mode",
+                    help="Replace: Delete current data\nAppend: Add to existing\nPreview: Just show data"
+                )
+                
+                if st.button(f"Import {data_type.title()}", key=f"import_{data_type}", type="primary"):
+                    if import_mode == "Preview":
+                        st.info("Preview mode - showing first 5 rows:")
+                        st.dataframe(df.head(), use_container_width=True)
+                    else:
+                        try:
+                            # Clean and validate the data
+                            cleaned_df = validate_and_clean_data(df, data_type)
+                            
+                            if import_mode == "Replace all":
+                                # Replace existing data
+                                if data_type == 'applications':
+                                    save_applications(cleaned_df)
+                                elif data_type == 'companies':
+                                    save_companies(cleaned_df)
+                                elif data_type == 'networking':
+                                    save_networking(cleaned_df)
+                                elif data_type == 'interviews':
+                                    save_interviews(cleaned_df)
+                                
+                                st.success(f"✅ Replaced {data_type} with {len(cleaned_df)} records")
+                                
+                            elif import_mode == "Append new":
+                                # Append to existing data
+                                if data_type == 'applications':
+                                    existing_df = load_applications()
+                                    combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                    save_applications(combined_df)
+                                elif data_type == 'companies':
+                                    existing_df = load_companies()
+                                    combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                    save_companies(combined_df)
+                                elif data_type == 'networking':
+                                    existing_df = load_networking()
+                                    combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                    save_networking(combined_df)
+                                elif data_type == 'interviews':
+                                    existing_df = load_interviews()
+                                    combined_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+                                    save_interviews(combined_df)
+                                
+                                st.success(f"✅ Added {len(cleaned_df)} new {data_type} records")
+                            
+                            st.info("Navigate to other sections to see imported data")
+                            
+                        except Exception as e:
+                            st.error(f"Error importing {data_type}: {str(e)}")
+                            
+            except Exception as e:
+                st.error(f"Error reading {data_type} file: {str(e)}")
+
+# Bulk upload option
+st.sidebar.markdown("---")
+st.sidebar.subheader("📤 Bulk Upload (Multi-sheet)")
+bulk_file = st.sidebar.file_uploader(
+    "Upload Multi-sheet Excel", 
+    type=['xlsx', 'xls'],
+    key="bulk_upload",
+    help="Upload Excel file with multiple sheets"
+)
+
+if bulk_file is not None:
     with st.sidebar:
         try:
-            data_dict, sheet_names = process_uploaded_excel(uploaded_file)
+            data_dict, sheet_names = process_uploaded_excel(bulk_file)
             
             if data_dict:
                 st.success(f"✅ Found {len(data_dict)} data types in {len(sheet_names)} sheets")
@@ -401,19 +523,19 @@ if uploaded_file is not None:
                     st.write(f"**{data_type.title()}**: {len(df)} records")
                 
                 # Import options
-                st.subheader("Import Options")
-                import_mode = st.radio(
-                    "How to handle existing data?",
+                bulk_import_mode = st.radio(
+                    "Bulk import mode:",
                     ["Replace all", "Append new", "Preview only"],
-                    help="Replace: Delete current data and use uploaded data\nAppend: Add uploaded data to existing data\nPreview: Just show what would be imported"
+                    key="bulk_import_mode",
+                    help="Replace: Delete current data\nAppend: Add to existing\nPreview: Just show what would be imported"
                 )
                 
-                if st.button("🔄 Import Data", type="primary"):
-                    if import_mode == "Preview only":
-                        st.info("Preview mode - no data was actually imported")
+                if st.button("🔄 Import All", key="bulk_import", type="primary"):
+                    if bulk_import_mode == "Preview only":
+                        st.info("Preview mode - no data imported")
                         for data_type, df in data_dict.items():
-                            st.subheader(f"{data_type.title()} Preview")
-                            st.dataframe(df.head(), use_container_width=True)
+                            with st.expander(f"{data_type.title()} Preview"):
+                                st.dataframe(df.head(), use_container_width=True)
                     else:
                         # Import the data
                         imported_count = 0
@@ -423,7 +545,7 @@ if uploaded_file is not None:
                                 # Clean and validate the data
                                 cleaned_df = validate_and_clean_data(uploaded_df, data_type)
                                 
-                                if import_mode == "Replace all":
+                                if bulk_import_mode == "Replace all":
                                     # Replace existing data
                                     if data_type == 'applications':
                                         save_applications(cleaned_df)
@@ -435,9 +557,9 @@ if uploaded_file is not None:
                                         save_interviews(cleaned_df)
                                     
                                     imported_count += len(cleaned_df)
-                                    st.success(f"✅ Replaced {data_type} with {len(cleaned_df)} records")
+                                    st.success(f"✅ Replaced {data_type}: {len(cleaned_df)} records")
                                     
-                                elif import_mode == "Append new":
+                                elif bulk_import_mode == "Append new":
                                     # Append to existing data
                                     if data_type == 'applications':
                                         existing_df = load_applications()
@@ -457,19 +579,17 @@ if uploaded_file is not None:
                                         save_interviews(combined_df)
                                     
                                     imported_count += len(cleaned_df)
-                                    st.success(f"✅ Added {len(cleaned_df)} new {data_type} records")
+                                    st.success(f"✅ Added {len(cleaned_df)} {data_type} records")
                                     
                             except Exception as e:
                                 st.error(f"Error importing {data_type}: {str(e)}")
                         
                         if imported_count > 0:
                             st.balloons()
-                            st.success(f"🎉 Successfully imported {imported_count} total records!")
-                            st.info("📝 Please refresh the page or navigate to different sections to see the imported data")
+                            st.success(f"🎉 Imported {imported_count} total records!")
             
             else:
-                st.error("❌ Could not find valid data in the uploaded file")
-                st.info("Make sure your Excel file has sheets named 'Applications', 'Companies', 'Networking', or 'Interviews'")
+                st.error("❌ No valid data found in file")
                 
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
